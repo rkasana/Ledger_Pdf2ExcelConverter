@@ -7,13 +7,10 @@ import io
 
 
 def extract_ledger_data(pdf_file):
-    """
-    Extracts transaction data from an uploaded PDF file object.
-    """
+    """Extracts transaction data from an uploaded PDF file object."""
     transactions = []
     party_name = "Unknown Party"
 
-    # Read the uploaded file object directly
     with pdfplumber.open(pdf_file) as pdf:
         text = ""
         for page in pdf.pages:
@@ -23,7 +20,6 @@ def extract_ledger_data(pdf_file):
 
     lines = text.split('\n')
 
-    # 1. Extract Party Name
     for i, line in enumerate(lines):
         if "Ledger Account" in line and i > 0:
             party_name = lines[i - 1].strip()
@@ -44,7 +40,6 @@ def extract_ledger_data(pdf_file):
 
         clean_line = line.replace('|', '').replace(',', '').strip()
 
-        # Match Transactions
         if "Opening Balance" in clean_line:
             numbers = re.findall(r'\d+\.\d{2}', clean_line)
             if numbers:
@@ -73,9 +68,7 @@ def extract_ledger_data(pdf_file):
 
 
 def create_excel(all_data):
-    """
-    Processes the raw data and generates an Excel file in memory.
-    """
+    """Processes the raw data and generates an Excel file in memory."""
     df = pd.DataFrame(all_data)
     final_rows = []
 
@@ -83,7 +76,6 @@ def create_excel(all_data):
 
     for party, party_data in df.groupby("Party Name"):
         running_outstanding = 0.0
-
         party_data['Month_Cat'] = pd.Categorical(party_data['Month'], categories=months_order, ordered=True)
         party_data = party_data.sort_values('Month_Cat')
 
@@ -114,7 +106,6 @@ def create_excel(all_data):
     final_df['Month_Cat'] = pd.Categorical(final_df['Month'], categories=months_order, ordered=True)
     final_df = final_df.sort_values(by=['Month_Cat', 'Party Name']).drop(columns=['Month_Cat'])
 
-    # Write to a memory buffer instead of a file on disk
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         final_df.to_excel(writer, index=False, sheet_name='Consolidated Ledger')
@@ -122,43 +113,70 @@ def create_excel(all_data):
     return buffer.getvalue()
 
 
+# --- STATE MANAGEMENT ---
+# Initialize session state variables to manage the UI flow
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
+if "processing_complete" not in st.session_state:
+    st.session_state.processing_complete = False
+if "excel_data" not in st.session_state:
+    st.session_state.excel_data = None
+
+
+def reset_app():
+    """Callback function triggered when the download button is clicked."""
+    st.session_state.uploader_key += 1  # Changing the key resets the file uploader widget
+    st.session_state.processing_complete = False
+    st.session_state.excel_data = None
+
+
 # --- WEB APP INTERFACE ---
 st.set_page_config(page_title="Ledger Processor", layout="centered")
+st.title("Welcome")
+st.markdown("Please Upload Valid PDFs")
 
-st.title("📊 Ledger PDF to Excel Converter")
-st.markdown("Upload multiple ledger PDFs to compile them into a single, month-by-month Excel report.")
+# File Uploader with a dynamic key tied to session state
+uploaded_files = st.file_uploader(
+    "Upload PDF Files",
+    type=["pdf"],
+    accept_multiple_files=True,
+    key=f"uploader_{st.session_state.uploader_key}"
+)
 
-# File Uploader
-uploaded_files = st.file_uploader("Upload PDF Files", type=["pdf"], accept_multiple_files=True)
-
+# Flow Logic
 if uploaded_files:
-    if st.button("Process Files"):
-        all_extracted_data = []
-        progress_bar = st.progress(0)
+    if not st.session_state.processing_complete:
+        st.info(f"You have uploaded {len(uploaded_files)} PDF(s).")
+        st.write("Do you want to process them?")
 
-        # Process each uploaded file
-        for i, file in enumerate(uploaded_files):
-            try:
-                pdf_data = extract_ledger_data(file)
-                all_extracted_data.extend(pdf_data)
-            except Exception as e:
-                st.error(f"Error processing {file.name}: {e}")
+        if st.button("Yes"):
+            all_extracted_data = []
+            progress_bar = st.progress(0)
 
-            # Update progress bar
-            progress_bar.progress((i + 1) / len(uploaded_files))
+            for i, file in enumerate(uploaded_files):
+                try:
+                    pdf_data = extract_ledger_data(file)
+                    all_extracted_data.extend(pdf_data)
+                except Exception as e:
+                    st.error(f"Error processing {file.name}: {e}")
 
-        if all_extracted_data:
-            st.success("✅ Files processed successfully!")
+                progress_bar.progress((i + 1) / len(uploaded_files))
 
-            # Generate the Excel file
-            excel_data = create_excel(all_extracted_data)
+            if all_extracted_data:
+                # Save the processed data to state and flag it as complete
+                st.session_state.excel_data = create_excel(all_extracted_data)
+                st.session_state.processing_complete = True
+                st.rerun()  # Refresh the page to hide the "Yes" button and show the download button
+            else:
+                st.warning("No transaction data could be extracted from the uploaded PDFs.")
 
-            # Download Button
-            st.download_button(
-                label="⬇️ Download Consolidated Excel",
-                data=excel_data,
-                file_name="Consolidated_Ledger.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.warning("No transaction data could be extracted from the uploaded PDFs.")
+    # Show the success message and download button if processing is done
+    if st.session_state.processing_complete and st.session_state.excel_data:
+        st.success("✅ Files processed successfully!")
+        st.download_button(
+            label="⬇️ Download Excel Sheet",
+            data=st.session_state.excel_data,
+            file_name="Consolidated_Ledger.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            on_click=reset_app  # This resets the app immediately after the file downloads
+        )
