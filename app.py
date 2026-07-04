@@ -168,7 +168,7 @@ def reset_app():
 # --- WEB APP INTERFACE ---
 st.set_page_config(page_title="Ledger Processor", layout="centered")
 st.title("📊 Ledger PDF to Excel Converter")
-st.markdown("Upload multiple ledger PDFs to compile them into a single, month-by-month Excel report.")
+st.markdown("Please Upload PDFs")
 
 uploaded_files = st.file_uploader(
     "Upload PDF Files", 
